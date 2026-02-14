@@ -214,8 +214,10 @@ EOF
 }
 
 # ---- Main ----
-setup_environment "staging"    "shopfast-staging-rg"
-setup_environment "production" "shopfast-prod-rg"
+STAGING_RG="${STAGING_RG:-shopfast-staging-rg}"
+PROD_RG="${PROD_RG:-shopfast-prod-rg}"
+setup_environment "staging"    "$STAGING_RG"
+setup_environment "production" "$PROD_RG"
 
 echo ""
 echo "========================================"

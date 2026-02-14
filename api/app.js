@@ -24,10 +24,10 @@ app.use(express.json());
 
 // Database configuration
 const dbConfig = {
-  user: process.env.DB_USER || 'sa',
-  password: process.env.DB_PASSWORD || '',
-  server: process.env.DB_SERVER || 'localhost',
-  database: process.env.DB_NAME || 'shopfast',
+  user: process.env.SQL_USER || process.env.DB_USER || 'sa',
+  password: process.env.SQL_PASSWORD || process.env.DB_PASSWORD || '',
+  server: process.env.SQL_SERVER || process.env.DB_SERVER || 'localhost',
+  database: process.env.SQL_DATABASE || process.env.DB_NAME || 'shopfast',
   options: {
     encrypt: true,
     trustServerCertificate: process.env.DB_TRUST_CERT === 'true',
@@ -99,7 +99,7 @@ app.get('/api/orders', async (req, res) => {
   try {
     const p = await getPool();
     const result = await p.request().query(`
-      SELECT o.id, o.customer_id, o.status, o.total_amount, o.created_at, o.updated_at,
+      SELECT o.id, o.customer_id, o.status, o.total, o.created_at, o.updated_at,
              c.name AS customer_name, c.email AS customer_email
       FROM orders o
       LEFT JOIN customers c ON o.customer_id = c.id
@@ -113,7 +113,7 @@ app.get('/api/orders', async (req, res) => {
       customerName: row.customer_name,
       customerEmail: row.customer_email,
       status: row.status,
-      totalAmount: row.total_amount,
+      total: row.total,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
@@ -131,7 +131,7 @@ app.get('/api/orders/:id', async (req, res) => {
     const result = await p.request()
       .input('id', sql.Int, req.params.id)
       .query(`
-        SELECT o.id, o.customer_id, o.status, o.total_amount, o.created_at, o.updated_at,
+        SELECT o.id, o.customer_id, o.status, o.total, o.created_at, o.updated_at,
                c.name AS customer_name, c.email AS customer_email
         FROM orders o
         LEFT JOIN customers c ON o.customer_id = c.id
@@ -147,7 +147,7 @@ app.get('/api/orders/:id', async (req, res) => {
       customerName: row.customer_name,
       customerEmail: row.customer_email,
       status: row.status,
-      totalAmount: row.total_amount,
+      total: row.total,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     });
@@ -165,8 +165,8 @@ app.get('/api/stats', async (req, res) => {
     const [orderStats, productStats] = await Promise.all([
       p.request().query(`
         SELECT COUNT(*) AS totalOrders,
-               SUM(total_amount) AS totalRevenue,
-               AVG(total_amount) AS avgOrderValue
+               SUM(total) AS totalRevenue,
+               AVG(total) AS avgOrderValue
         FROM orders
         WHERE status IS NOT NULL  -- Filter: exclude legacy migrated orders with no status (2023 migration)
       `),

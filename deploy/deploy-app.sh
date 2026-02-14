@@ -46,7 +46,7 @@ cp -r "$PROJECT_ROOT/frontend/dist" "$PROJECT_ROOT/api/public"
 # --- Package API ---
 echo "📦 Packaging API..."
 cd "$PROJECT_ROOT/api"
-npm ci --production 2>/dev/null || npm ci
+npm ci --production 2>/dev/null || npm install --production 2>/dev/null || npm install
 
 DEPLOY_ZIP="/tmp/shopfast-deploy-${ENV_NAME}.zip"
 rm -f "$DEPLOY_ZIP"
