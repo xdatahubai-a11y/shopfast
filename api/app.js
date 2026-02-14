@@ -60,6 +60,7 @@ const STATUS_BADGES = {
 };
 
 function formatStatus(status) {
+  if (!status) return { color: '#6b7280', label: 'Unknown', icon: '?' };
   const key = status.toLowerCase();  // crashes when status is null from legacy rows
   return STATUS_BADGES[key] || { color: '#6b7280', label: status, icon: '?' };
 }
