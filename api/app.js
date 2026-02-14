@@ -1,5 +1,6 @@
-// ShopFast API v1.0.0
+// ShopFast API v1.1.0
 // E-commerce backend service
+// PR #42: Show all orders for status dashboard + status badges
 
 const appInsights = require('applicationinsights');
 if (process.env.APPLICATIONINSIGHTS_CONNECTION_STRING) {
@@ -17,7 +18,7 @@ const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const VERSION = process.env.APP_VERSION || '1.0.0';
+const VERSION = process.env.APP_VERSION || '1.1.0';
 
 app.use(cors());
 app.use(express.json());
@@ -46,6 +47,21 @@ async function getPool() {
     pool = await sql.connect(dbConfig);
   }
   return pool;
+}
+
+// ─── Status formatting (PR #42) ───────────────────────────────────────────────
+
+const STATUS_BADGES = {
+  pending:   { color: '#f59e0b', label: 'Pending',   icon: '⏳' },
+  confirmed: { color: '#3b82f6', label: 'Confirmed', icon: '✓' },
+  shipped:   { color: '#8b5cf6', label: 'Shipped',   icon: '📦' },
+  delivered: { color: '#10b981', label: 'Delivered',  icon: '✅' },
+  cancelled: { color: '#ef4444', label: 'Cancelled',  icon: '✗' },
+};
+
+function formatStatus(status) {
+  const key = status.toLowerCase();  // crashes when status is null from legacy rows
+  return STATUS_BADGES[key] || { color: '#6b7280', label: status, icon: '?' };
 }
 
 // ─── Health ────────────────────────────────────────────────────────────────────
@@ -98,21 +114,31 @@ app.get('/api/products/:id', async (req, res) => {
 app.get('/api/orders', async (req, res) => {
   try {
     const p = await getPool();
-    const result = await p.request().query(`
+    const request = p.request();
+
+    // Build query with optional status filter
+    let query = `
       SELECT o.id, o.customer_id, o.status, o.total, o.created_at, o.updated_at,
              c.name AS customer_name, c.email AS customer_email
       FROM orders o
-      LEFT JOIN customers c ON o.customer_id = c.id
-      WHERE o.status IS NOT NULL  -- Filter: exclude legacy migrated orders with no status (2023 migration)
-      ORDER BY o.created_at DESC
-    `);
+      LEFT JOIN customers c ON o.customer_id = c.id`;
+
+    // v1.1.0: Show all orders including legacy for complete dashboard
+    if (req.query.status) {
+      query += ` WHERE o.status = @status`;
+      request.input('status', sql.NVarChar, req.query.status);
+    }
+
+    query += ` ORDER BY o.created_at DESC`;
+
+    const result = await request.query(query);
 
     const orders = result.recordset.map(row => ({
       id: row.id,
       customerId: row.customer_id,
       customerName: row.customer_name,
       customerEmail: row.customer_email,
-      status: row.status,
+      status: formatStatus(row.status),
       total: row.total,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
@@ -146,7 +172,7 @@ app.get('/api/orders/:id', async (req, res) => {
       customerId: row.customer_id,
       customerName: row.customer_name,
       customerEmail: row.customer_email,
-      status: row.status,
+      status: formatStatus(row.status),
       total: row.total,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
@@ -162,23 +188,39 @@ app.get('/api/orders/:id', async (req, res) => {
 app.get('/api/stats', async (req, res) => {
   try {
     const p = await getPool();
-    const [orderStats, productStats] = await Promise.all([
+    const [orderStats, productStats, statusBreakdown] = await Promise.all([
       p.request().query(`
         SELECT COUNT(*) AS totalOrders,
                SUM(total) AS totalRevenue,
                AVG(total) AS avgOrderValue
         FROM orders
-        WHERE status IS NOT NULL  -- Filter: exclude legacy migrated orders with no status (2023 migration)
       `),
       p.request().query('SELECT COUNT(*) AS totalProducts FROM products'),
+      // v1.1.0: Status breakdown for dashboard
+      p.request().query(`
+        SELECT status, COUNT(*) AS count, SUM(total) AS revenue
+        FROM orders
+        GROUP BY status
+      `),
     ]);
 
     const stats = orderStats.recordset[0];
+    const byStatus = {};
+    statusBreakdown.recordset.forEach(row => {
+      const badge = formatStatus(row.status);  // crashes on NULL status group
+      byStatus[badge.label] = {
+        count: row.count,
+        revenue: row.revenue || 0,
+        badge: badge,
+      };
+    });
+
     res.json({
       totalOrders: stats.totalOrders,
       totalRevenue: stats.totalRevenue || 0,
       avgOrderValue: stats.avgOrderValue || 0,
       totalProducts: productStats.recordset[0].totalProducts,
+      byStatus: byStatus,
       version: VERSION,
     });
   } catch (err) {
