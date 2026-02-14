@@ -66,7 +66,7 @@ app.get('/api/products', async (req, res) => {
   try {
     const p = await getPool();
     const result = await p.request().query(`
-      SELECT id, name, description, price, category, image_url, stock_quantity
+      SELECT id, name, description, price, category, image_url, stock
       FROM products
       ORDER BY name
     `);
@@ -82,7 +82,7 @@ app.get('/api/products/:id', async (req, res) => {
     const p = await getPool();
     const result = await p.request()
       .input('id', sql.Int, req.params.id)
-      .query('SELECT id, name, description, price, category, image_url, stock_quantity FROM products WHERE id = @id');
+      .query('SELECT id, name, description, price, category, image_url, stock FROM products WHERE id = @id');
     if (result.recordset.length === 0) {
       return res.status(404).json({ error: 'Product not found' });
     }
