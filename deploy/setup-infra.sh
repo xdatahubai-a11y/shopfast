@@ -111,10 +111,16 @@ setup_environment() {
     --max-size 2GB \
     -o none
 
+  # Install mssql if needed (for SQL runner)
+  if [[ ! -d "$PROJECT_ROOT/db/node_modules/mssql" ]]; then
+    echo "Installing mssql driver..."
+    (cd "$PROJECT_ROOT/db" && npm init -y --silent && npm install --silent mssql) >/dev/null 2>&1
+  fi
+
   # Apply schema
   echo "Applying schema..."
-  sqlcmd -S "$SQL_FQDN" -U "$SQL_ADMIN" -P "$SQL_PASSWORD" -d "$SQL_DB_NAME" -C \
-    -i "$PROJECT_ROOT/db/schema.sql"
+  node "$PROJECT_ROOT/db/run-sql.js" "$SQL_FQDN" "$SQL_DB_NAME" "$SQL_ADMIN" "$SQL_PASSWORD" \
+    "$PROJECT_ROOT/db/schema.sql"
 
   # Apply seed data
   local SEED_FILE
@@ -124,8 +130,8 @@ setup_environment() {
     SEED_FILE="$PROJECT_ROOT/db/seed-production.sql"
   fi
   echo "Applying seed data from $(basename "$SEED_FILE")..."
-  sqlcmd -S "$SQL_FQDN" -U "$SQL_ADMIN" -P "$SQL_PASSWORD" -d "$SQL_DB_NAME" -C \
-    -i "$SEED_FILE"
+  node "$PROJECT_ROOT/db/run-sql.js" "$SQL_FQDN" "$SQL_DB_NAME" "$SQL_ADMIN" "$SQL_PASSWORD" \
+    "$SEED_FILE"
 
   # --- App Service Plan ---
   local PLAN_NAME="shopfast-${ENV_NAME}-plan-${SUFFIX}"
