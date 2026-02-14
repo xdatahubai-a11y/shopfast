@@ -1,7 +1,7 @@
-FROM node:22-slim
+FROM node:20-alpine
 WORKDIR /app
-COPY package*.json ./
-RUN npm ci --omit=dev
+COPY package.json package-lock.json* ./
+RUN npm ci --production
 COPY . .
 EXPOSE 3000
 CMD ["node", "app.js"]
