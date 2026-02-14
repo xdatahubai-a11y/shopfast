@@ -2,173 +2,280 @@
 set -euo pipefail
 
 #############################################################################
-# ShopFast Demo — End-to-End: Bad PR → Prod Failure → Dave Investigates → Fix
+# ShopFast Demo — End-to-End Incident Response
 #
-# Prerequisites:
-#   - Both environments deployed (run deploy/setup-staging.sh + deploy/setup-prod.sh)
-#   - Dave onboarded and monitoring the production subscription
-#   - GitHub repo initialized with v1.0.0 code
+# Flow:
+#   1. Show healthy production app
+#   2. Developer creates PR "Improve order status display"
+#   3. PR merges → deploys to staging → passes
+#   4. Deploys to production → starts failing (NULL status in legacy data)
+#   5. Dave detects errors via App Insights alert
+#   6. Dave investigates → correlates with the bad PR
+#   7. Dave creates fix PR on GitHub
+#   8. Dave creates incident (GitHub Issue) with full details
+#   9. Dave asks for human approval to deploy fix
 #
 # Usage: ./run-demo.sh
 #############################################################################
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$REPO_DIR/deploy/config.sh"
 
-# These get set by the deploy scripts
-STAGING_URL="${STAGING_URL:-http://localhost:3001}"
-PROD_URL="${PROD_URL:-http://localhost:3000}"
-GITHUB_REPO="${GITHUB_REPO:-xdatahubai-a11y/shopfast}"
+STAGING_IP=$(cat /tmp/shopfast-staging-ip.txt 2>/dev/null || echo "")
+PROD_IP=$(cat /tmp/shopfast-prod-ip.txt 2>/dev/null || echo "")
+STAGING_URL="http://${STAGING_IP}:3000"
+PROD_URL="http://${PROD_IP}:3000"
 
-log() { echo ""; echo "━━━ $(date +%H:%M:%S) $* ━━━"; }
-pause() { echo ""; echo "  ▸ Press Enter to continue..."; read -r; }
+log() { echo ""; echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; echo "  $(date +%H:%M:%S)  $*"; echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; }
+pause() { echo ""; echo "  ▶ Press Enter to continue..."; read -r; }
 
-#############################################################################
-log "🎬 DEMO START — ShopFast E-Commerce"
+clear
 echo ""
+echo "  ⚡ ShopFast — AI SRE Demo"
+echo "  ─────────────────────────"
 echo "  Staging:    $STAGING_URL"
 echo "  Production: $PROD_URL"
-echo "  Repo:       $GITHUB_REPO"
+echo "  Repo:       https://github.com/$GITHUB_REPO"
+echo ""
+echo "  Dave is watching production via App Insights + webhook alerts."
+echo ""
 pause
 
 #############################################################################
-log "📋 Step 1: Show healthy production"
+log "📋 STEP 1 — Show healthy production"
+
 echo ""
-echo "  Checking production health..."
+echo "  Production health check:"
 curl -s "$PROD_URL/api/health" | jq .
 echo ""
-echo "  Fetching orders (all working, including legacy null-status orders)..."
-curl -s "$PROD_URL/api/orders" | jq '.count, .orders[:3]'
+echo "  Dashboard stats:"
+curl -s "$PROD_URL/api/stats" | jq .
+echo ""
+echo "  Recent orders (note: legacy orders have status displayed as 'unknown'):"
+curl -s "$PROD_URL/api/orders" | jq '.orders[:5] | .[] | {id, customer, status, total}'
+echo ""
+echo "  ✅ Everything working. 10 orders including 5 legacy ones with null status."
 pause
 
 #############################################################################
-log "🔧 Step 2: Developer creates PR — 'Improve order listing'"
+log "🔧 STEP 2 — Developer creates PR"
+
+echo ""
+echo "  A developer wants to improve the order listing UI."
+echo "  They add status formatting (capitalize, color badges) and filtering."
 echo ""
 echo "  Creating feature branch..."
+
 cd "$REPO_DIR"
-git checkout -b feature/improve-order-listing 2>/dev/null || git checkout feature/improve-order-listing
+# Reset to clean state
+git checkout main 2>/dev/null && git pull 2>/dev/null || true
+git branch -D feature/improve-order-listing 2>/dev/null || true
+
+# Create the bad branch
+git checkout -b feature/improve-order-listing
 cp api/app.bad.js api/app.js
 git add api/app.js
 git commit -m "feat: Add status filtering and formatting to orders endpoint
 
 - Add ?status= query parameter for filtering orders
-- Format status badges with proper capitalization  
-- Add status breakdown to dashboard stats
-- Improve UI with color-coded status badges
+- Format status badges with proper capitalization (formatStatus helper)
+- Add color-coded status badges for UI
+- Add status breakdown to dashboard stats endpoint
 
-Tested locally with sample data — all endpoints working." 2>/dev/null || true
+Tested with local dev data — all endpoints returning correct responses."
 
-echo "  Pushing branch and creating PR..."
+echo "  Pushing and creating PR..."
 git push origin feature/improve-order-listing -f 2>/dev/null
-PR_URL=$(gh pr create --title "feat: Improve order listing with status filtering" \
-  --body "## Changes
-- Add \`?status=\` query parameter for filtering orders
-- Format status badges with proper capitalization  
-- Add status breakdown to dashboard stats
-- Improve UI with color-coded status badges
+
+gh pr create \
+  --title "feat: Improve order listing with status filtering & formatting" \
+  --body "## What Changed
+- Added \`formatStatus()\` helper to capitalize order status for UI display
+- Added \`getStatusColor()\` for color-coded status badges
+- Added \`?status=\` query parameter to filter orders
+- Added status breakdown to \`/api/stats\` endpoint
 
 ## Testing
-- ✅ Unit tests pass
-- ✅ Tested locally with sample data
-- ✅ All endpoints return correct data
-- ✅ Status filter works: \`/api/orders?status=pending\`" \
-  --base main 2>/dev/null || echo "PR already exists")
-echo "  PR: $PR_URL"
+- ✅ All API endpoints return correct data
+- ✅ Status filter works: \`GET /api/orders?status=pending\`
+- ✅ Dashboard stats include status breakdown
+- ✅ No breaking changes to existing response format
+
+## Screenshots
+Status badges now show properly formatted: \`Pending\`, \`Shipped\`, \`Delivered\` etc." \
+  --base main 2>/dev/null || echo "  PR already exists"
+
+echo ""
+echo "  PR created. Developer tested locally — works fine."
+echo "  Code review passes. Merging..."
 pause
 
 #############################################################################
-log "✅ Step 3: PR merged and deployed to STAGING"
+log "🔀 STEP 3 — PR merges, deploys to STAGING"
+
 echo ""
-echo "  Merging PR..."
-gh pr merge --squash --auto 2>/dev/null || gh pr merge --squash 2>/dev/null || echo "  (merge manually if needed)"
-git checkout main && git pull 2>/dev/null || true
+gh pr merge --squash -d 2>/dev/null || echo "  (merging...)"
+git checkout main && git pull 2>/dev/null
 
 echo "  Deploying v1.1.0 to staging..."
-# TODO: Update staging container with bad code
-echo "  (Deploy command here — updates staging container image)"
-sleep 2
+"$REPO_DIR/deploy/push-code.sh" --env staging --bad --version 1.1.0 2>&1 | tail -3
 
 echo ""
 echo "  Testing staging..."
+sleep 10
+echo "  Health:"
 curl -s "$STAGING_URL/api/health" | jq .
 echo ""
-echo "  Staging orders (clean data — no nulls — ALL PASS ✅):"
-curl -s "$STAGING_URL/api/orders" | jq '.count'
+echo "  Orders (staging has clean data — no nulls):"
+STAGING_ORDERS=$(curl -s "$STAGING_URL/api/orders")
+echo "$STAGING_ORDERS" | jq '.count'
+echo "$STAGING_ORDERS" | jq '.orders[:3] | .[] | {id, customer, status, total}'
+echo ""
 echo "  Stats:"
 curl -s "$STAGING_URL/api/stats" | jq .
 echo ""
-echo "  ✅ Staging looks good! Promoting to production..."
+echo "  ✅ Staging passes! All orders have proper status. Promoting to production..."
 pause
 
 #############################################################################
-log "🚀 Step 4: Deploy to PRODUCTION"
+log "🚀 STEP 4 — Deploy to PRODUCTION"
+
 echo ""
 echo "  Deploying v1.1.0 to production..."
-# TODO: Update production container with bad code
-echo "  (Deploy command here — updates prod container image)"
-sleep 2
-echo "  Production deploy complete."
+"$REPO_DIR/deploy/push-code.sh" --env prod --bad --version 1.1.0 2>&1 | tail -3
+
+echo ""
+echo "  Waiting for container to start..."
+sleep 15
+echo "  Health check:"
+curl -s "$PROD_URL/api/health" | jq .
 pause
 
 #############################################################################
-log "💥 Step 5: PRODUCTION BREAKS"
+log "💥 STEP 5 — PRODUCTION FAILS"
+
 echo ""
-echo "  Simulating real traffic hitting the orders endpoint..."
-echo "  (This will fail because production has legacy orders with NULL status)"
+echo "  Sending real traffic to production..."
+echo "  (Legacy orders with NULL status will crash formatStatus())"
 echo ""
-for i in $(seq 1 20); do
-  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$PROD_URL/api/orders")
-  if [ "$HTTP_CODE" = "500" ]; then
-    echo "  Request $i: ❌ HTTP 500"
+
+FAIL=0
+for i in $(seq 1 30); do
+  CODE=$(curl -s -o /tmp/shopfast-resp.json -w "%{http_code}" "$PROD_URL/api/orders" 2>/dev/null)
+  if [ "$CODE" = "500" ]; then
+    ((FAIL++))
+    echo "  Request $i: ❌ HTTP 500 — $(cat /tmp/shopfast-resp.json | jq -r '.error' 2>/dev/null)"
   else
-    echo "  Request $i: ✅ HTTP $HTTP_CODE"
+    echo "  Request $i: ✅ HTTP $CODE"
   fi
-  sleep 0.5
+  sleep 0.3
 done
 
 echo ""
 echo "  Also hitting stats endpoint..."
-for i in $(seq 1 10); do
-  curl -s -o /dev/null -w "  Stats request $i: HTTP %{http_code}\n" "$PROD_URL/api/stats"
-  sleep 0.5
+for i in $(seq 1 15); do
+  CODE=$(curl -s -o /dev/null -w "%{http_code}" "$PROD_URL/api/stats")
+  [ "$CODE" = "500" ] && echo "  Stats $i: ❌ HTTP 500" || echo "  Stats $i: ✅ HTTP $CODE"
+  sleep 0.3
 done
 
 echo ""
-echo "  🔴 Production is failing! Errors flowing into App Insights..."
-echo "  Azure Monitor alert will fire within 5 minutes → webhook to Dave"
+echo "  🔴 Production is DOWN. $FAIL/30 order requests failed."
+echo "  Errors are flowing into App Insights."
+echo "  Azure Monitor alert will fire → webhook → Dave"
+echo ""
+
+# Keep generating traffic in background
+echo "  Starting background traffic..."
+"$SCRIPT_DIR/traffic.sh" "$PROD_URL" --rate 2 --duration 600 > /tmp/shopfast-traffic.log 2>&1 &
+TRAFFIC_PID=$!
+echo "  Traffic PID: $TRAFFIC_PID (will run for 10 min)"
 pause
 
 #############################################################################
-log "🤖 Step 6: DAVE RECEIVES ALERT (automatic)"
+log "🤖 STEP 6 — DAVE RESPONDS (autonomous)"
+
 echo ""
-echo "  Waiting for Dave to receive the webhook alert and start investigating..."
-echo "  Watch Dave's Telegram for updates."
+echo "  Dave should now:"
 echo ""
-echo "  Expected Dave actions:"
-echo "    1. Receive webhook alert: 'High error rate on shopfast-prod'"
-echo "    2. Query App Insights → find TypeError: Cannot read properties of null"
-echo "    3. Check recent deployments → v1.1.0 just deployed"
-echo "    4. Check git log → find PR 'Improve order listing'"
-echo "    5. Read the diff → spot missing null check in formatStatus()"
-echo "    6. Create fix PR → add null guard to formatStatus()"
-echo "    7. Report on Telegram with INC-NNN"
+echo "  1. 📨 Receive webhook alert"
+echo "     → 'ShopFast production: high error rate — 500 errors on /api/orders'"
 echo ""
-echo "  ⏳ This happens autonomously. Watch Telegram..."
+echo "  2. 🔍 Investigate App Insights"
+echo "     → Query exceptions table"
+echo "     → Find: TypeError: Cannot read properties of null (reading 'charAt')"
+echo "     → Stack trace points to formatStatus() in app.js"
+echo ""
+echo "  3. 📋 Check recent deployments"
+echo "     → Production just updated from v1.0.0 → v1.1.0"
+echo "     → Staging (v1.1.0) is healthy — data-dependent issue"
+echo ""
+echo "  4. 🔗 Correlate with git history"
+echo "     → Find the squash commit 'feat: Improve order listing...'"
+echo "     → Read the diff — see formatStatus() has no null guard"
+echo "     → Compare staging seed (clean) vs production seed (nulls)"
+echo ""
+echo "  5. 🛠️  Create fix PR on GitHub"
+echo "     → Branch: fix/null-status-handling"
+echo "     → Add null check: status ? formatStatus(status) : 'Unknown'"
+echo "     → PR links to incident"
+echo ""
+echo "  6. 🎫 Create GitHub Issue (incident)"
+echo "     → INC-001: Production order-api failure"
+echo "     → Root cause: PR #N introduced null-unsafe formatStatus()"
+echo "     → Impact: /api/orders and /api/stats returning 500"
+echo "     → Fix: PR #M (awaiting approval)"
+echo "     → Timeline with all steps"
+echo ""
+echo "  7. 👤 Ask for human approval"
+echo "     → 'Fix PR ready. Approve to merge and redeploy?'"
+echo ""
+echo "  ━━━ Watch Dave's Telegram messages ━━━"
+echo ""
+echo "  Press Enter after Dave has created the incident and fix PR..."
 pause
+
+#############################################################################
+log "✅ STEP 7 — Human approves, fix deploys"
+
+echo ""
+echo "  Review Dave's fix PR on GitHub..."
+echo "  Once approved and merged, deploy the fix:"
+echo ""
+echo "    cd $REPO_DIR/deploy"
+echo "    ./push-code.sh --env prod --version 1.1.1"
+echo ""
+echo "  Then verify production is healthy again:"
+echo "    curl $PROD_URL/api/orders | jq '.count'"
+echo ""
+
+# Kill background traffic
+kill $TRAFFIC_PID 2>/dev/null || true
 
 #############################################################################
 log "🎬 DEMO COMPLETE"
+
 echo ""
 echo "  Timeline:"
-echo "    T+0:00  PR created and merged"
-echo "    T+0:30  Deployed to staging (passed ✅)"
-echo "    T+1:00  Deployed to production"
-echo "    T+1:30  Production errors begin"
-echo "    T+5:00  Azure alert fires → Dave receives webhook"
-echo "    T+6:00  Dave investigates, correlates with PR"
-echo "    T+8:00  Dave creates fix PR"
-echo "    T+9:00  Dave reports INC-001 on Telegram"
+echo "  ──────────────────────────────────────────────"
+echo "  T+0:00   Developer creates PR (status formatting)"
+echo "  T+0:30   PR merges → deploys to staging"
+echo "  T+1:00   Staging passes ✅ (clean data)"
+echo "  T+1:30   Deploys to production"
+echo "  T+2:00   Production fails 🔴 (legacy NULL data)"
+echo "  T+5:00   Azure alert fires → webhook → Dave"
+echo "  T+6:00   Dave queries App Insights, finds TypeError"
+echo "  T+7:00   Dave correlates with recent PR"
+echo "  T+8:00   Dave creates fix PR + GitHub incident"
+echo "  T+9:00   Dave asks human for approval"
+echo "  T+10:00  Human approves → fix deploys → production healthy ✅"
+echo "  ──────────────────────────────────────────────"
 echo ""
-echo "  Key insight: The bug passed staging because staging has clean data."
-echo "  Production has legacy orders with NULL status from a 2023 migration."
-echo "  Dave found this in minutes — without human intervention."
+echo "  Key insight:"
+echo "  The bug passed staging because staging has CLEAN test data."
+echo "  Production has LEGACY orders with NULL status from a 2023 migration."
+echo "  Dave found this in minutes — traced the error to the exact PR,"
+echo "  created a fix, filed an incident, and waited for human approval."
+echo "  No human had to wake up at 3am to debug this."
+echo ""
