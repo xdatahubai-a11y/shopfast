@@ -7,124 +7,85 @@ on:
 permissions:
   id-token: write
   contents: read
+  packages: write
+
+env:
+  ACR_NAME: shopfastacradd07a1f
+  ACR_LOGIN: shopfastacradd07a1f.azurecr.io
+  IMAGE_NAME: shopfast
+  STG_APP: shopfast-staging
+  STG_RG: shopfast-stg-rg
+  PRD_APP: shopfast-production
+  PRD_RG: shopfast-prd-rg
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    environment: production
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Setup Node.js 20
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: |
-            frontend/package-lock.json
-            api/package-lock.json
-
-      - name: Install & build frontend
-        working-directory: frontend
-        run: |
-          npm ci
-          npm run build
-
-      - name: Copy frontend build to API
-        run: |
-          rm -rf api/public
-          cp -r frontend/dist api/public
-
-      - name: Install API dependencies
-        working-directory: api
-        run: npm ci --production
-
-      - name: Package application
-        run: |
-          cd api
-          zip -r ../shopfast-deploy.zip . -x "*.git*"
 
       - name: Azure Login
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      # ---- Stage 1: Deploy to Staging Environment ----
+      - name: ACR Login
+        run: az acr login -n $ACR_NAME
+
+      - name: Build & Push Image
+        run: |
+          TAG="v$(date +%Y%m%d-%H%M%S)-${GITHUB_SHA::7}"
+          echo "IMAGE_TAG=$TAG" >> $GITHUB_ENV
+          docker build -t $ACR_LOGIN/$IMAGE_NAME:$TAG -t $ACR_LOGIN/$IMAGE_NAME:latest .
+          docker push $ACR_LOGIN/$IMAGE_NAME:$TAG
+          docker push $ACR_LOGIN/$IMAGE_NAME:latest
+
       - name: Deploy to Staging
-        uses: azure/webapps-deploy@v3
-        with:
-          app-name: ${{ vars.STAGING_APP_NAME }}
-          resource-group-name: ${{ vars.STAGING_RG }}
-          package: shopfast-deploy.zip
-
-      - name: Smoke test — Staging
         run: |
-          echo "🧪 Testing staging environment..."
-          sleep 15
+          echo "🚀 Deploying $IMAGE_TAG to staging..."
+          az containerapp update \
+            -n $STG_APP -g $STG_RG \
+            --image $ACR_LOGIN/$IMAGE_NAME:$IMAGE_TAG
+
+      - name: Smoke Test Staging
+        run: |
+          echo "🧪 Testing staging..."
+          sleep 20
           for i in 1 2 3 4 5; do
             CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-              "https://${{ vars.STAGING_APP_NAME }}.azurewebsites.net/api/health")
+              "https://$STG_APP.nicepebble-47c13b67.eastus2.azurecontainerapps.io/api/health")
             if [[ "$CODE" == "200" ]]; then
-              echo "✅ Staging health check passed"
+              echo "✅ Staging healthy"
               exit 0
             fi
             echo "  Attempt $i: HTTP $CODE — retrying..."
             sleep 10
           done
-          echo "❌ Staging health check failed"
+          echo "❌ Staging failed"
           exit 1
 
-      # ---- Stage 2: Deploy to Production Staging Slot ----
-      - name: Deploy to Production (staging slot)
-        uses: azure/webapps-deploy@v3
-        with:
-          app-name: ${{ vars.PROD_APP_NAME }}
-          resource-group-name: ${{ vars.PROD_RG }}
-          slot-name: staging
-          package: shopfast-deploy.zip
-
-      - name: Smoke test — Production Staging Slot
+      - name: Deploy to Production
         run: |
-          echo "🧪 Testing production staging slot..."
-          sleep 15
+          echo "🚀 Deploying $IMAGE_TAG to production..."
+          az containerapp update \
+            -n $PRD_APP -g $PRD_RG \
+            --image $ACR_LOGIN/$IMAGE_NAME:$IMAGE_TAG
+
+      - name: Verify Production
+        run: |
+          echo "🏥 Verifying production..."
+          sleep 20
           for i in 1 2 3 4 5; do
             CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-              "https://${{ vars.PROD_APP_NAME }}-staging.azurewebsites.net/api/health")
+              "https://$PRD_APP.nicepebble-47c13b67.eastus2.azurecontainerapps.io/api/health")
             if [[ "$CODE" == "200" ]]; then
-              echo "✅ Production slot health check passed"
+              echo "✅ Production healthy!"
               exit 0
             fi
             echo "  Attempt $i: HTTP $CODE — retrying..."
             sleep 10
           done
-          echo "❌ Production slot health check failed"
-          exit 1
-
-      # ---- Stage 3: Swap to Production ----
-      - name: Swap staging slot to production
-        run: |
-          echo "🔄 Swapping staging slot to production..."
-          az webapp deployment slot swap \
-            --name ${{ vars.PROD_APP_NAME }} \
-            --resource-group ${{ vars.PROD_RG }} \
-            --slot staging \
-            --target-slot production
-
-      - name: Post-deploy health check — Production
-        run: |
-          echo "🏥 Final production health check..."
-          sleep 15
-          for i in 1 2 3 4 5; do
-            CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-              "https://${{ vars.PROD_APP_NAME }}.azurewebsites.net/api/health")
-            if [[ "$CODE" == "200" ]]; then
-              echo "✅ Production is live and healthy!"
-              exit 0
-            fi
-            echo "  Attempt $i: HTTP $CODE — retrying..."
-            sleep 10
-          done
-          echo "❌ Production health check failed after swap!"
+          echo "❌ Production health check failed!"
           exit 1
