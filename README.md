@@ -1,66 +1,95 @@
-# ShopFast — SRE Demo App
+# ShopFast — Enterprise SRE Demo
 
-A realistic e-commerce app designed to demonstrate AI-powered SRE incident response.
+A realistic e-commerce platform demonstrating AI-powered SRE incident detection, investigation, and resolution.
 
 ## The Scenario
 
-A developer adds status badges to the order dashboard (PR #42). They test against staging — looks great. They deploy to production — it crashes. Why?
+A developer adds status badges to the order dashboard (PR #42). They remove a `WHERE o.status IS NOT NULL` filter from the SQL query to "show all orders for the new dashboard." They test against staging — looks great. CI/CD deploys to production via slot swap — it crashes.
 
-**Staging** has clean data: every order has a status (`pending`, `shipped`, etc.).
-**Production** has legacy data from a 2023 migration: some orders have `NULL` status.
+**Why?** Production has legacy orders from a 2023 data migration with `NULL` status fields. The SQL filter was the only thing keeping those rows out. The new `formatStatus()` function calls `.toLowerCase()` on null.
 
-The new `formatStatus()` function calls `.toLowerCase()` on the status field. `null.toLowerCase()` = 💥
+**Staging** has clean seed data — every order has a status. No NULLs, no problem.  
+**Production** has real-world legacy data — 5 orders with NULL status from an old system migration.
 
 ## Architecture
 
 ```
-shopfast-staging-rg          shopfast-prod-rg
-├── Azure SQL (clean data)   ├── Azure SQL (legacy NULLs)
-├── App Insights             ├── App Insights → Alert → Dave webhook
-├── Container Instance       └── Container Instance
-└── ACR                          └── ACR
+GitHub Actions CI/CD
+  push to main → build → deploy staging → deploy prod slot → swap to production
+
+shopfast-staging-rg                    shopfast-prod-rg
+├── App Service Plan (B1)              ├── App Service Plan (B1)
+├── App Service (shopfast-staging)     ├── App Service (shopfast-prod)
+├── Azure SQL (clean data)             │   ├── Production slot
+├── App Insights                       │   └── Staging slot (pre-swap)
+└── Log Analytics                      ├── Azure SQL (legacy NULL data)
+                                       ├── App Insights → Alert → Dave webhook
+                                       └── Log Analytics
 ```
 
-## Demo Flow
+## Demo Flow (~10 minutes)
 
-1. `setup-demo.sh` — Deploy both environments with v1.0.0 (safe)
-2. `create-bad-pr.sh` — Create PR #42 on GitHub
-3. `deploy-bad-pr.sh` — Deploy v1.1.0 to both (staging passes, prod crashes)
-4. `setup-alerts.sh` — Wire App Insights alerts to Dave's webhook
-5. Traffic hits production → 500s → alert fires → Dave investigates
+| Time | Event |
+|------|-------|
+| T+0 | Both environments healthy on v1.0.0 |
+| T+1 | Developer creates PR #42: "Add status badge system" |
+| T+2 | PR merged → CI/CD deploys to staging → passes |
+| T+3 | CI/CD deploys to production staging slot → health check passes |
+| T+4 | Slot swap to production → **💥 orders/stats endpoints crash** |
+| T+5 | User traffic generates 500s → App Insights → Azure Monitor alert |
+| T+6 | Dave receives webhook, begins investigation |
+| T+8 | Dave traces error → formatStatus() → removed WHERE clause → PR #42 |
+| T+9 | Dave creates fix PR restoring null safety |
+| T+10 | Incident report posted to Telegram |
 
-Or use `run-demo.sh` for the guided walkthrough.
+## Quick Start
 
-## What Dave Does
+```bash
+# 1. Provision infrastructure (~15 min)
+cd deploy
+./setup-infra.sh
 
-1. **Receives alert** via webhook (Azure Monitor → action group → Dave)
-2. **Investigates** — queries App Insights, finds `TypeError: Cannot read properties of null (reading 'toLowerCase')`
-3. **Correlates to code** — finds PR #42 introduced `formatStatus()`, identifies the null-safety gap
-4. **Creates fix PR** — adds `status = status || 'unknown'` before the `.toLowerCase()` call
-5. **Reports on Telegram** — full incident report with timeline, root cause, and fix
+# 2. Initial deploy of v1.0.0 to both environments
+./deploy-app.sh staging
+./deploy-app.sh production
 
-## Files
+# 3. Wire alerts to Dave
+DAVE_WEBHOOK_URL=https://your-dave.azurewebsites.net/hooks/wake ./setup-alerts.sh
+
+# 4. Run the demo
+./run-demo.sh
+
+# 5. Clean up
+./teardown.sh
+```
+
+## Project Structure
 
 ```
 api/
-  app.js          — v1.0.0 (safe, handles NULLs)
-  app-v1.1.0.js   — v1.1.0 (buggy, crashes on NULLs)
-  public/         — React SPA dashboard
+  app.js            v1.0.0 — safe (WHERE IS NOT NULL filters legacy rows)
+  app-v1.1.0.js     v1.1.0 — buggy (removes filter, adds formatStatus)
+  public/           Built frontend (copied from frontend/dist)
   Dockerfile
+frontend/
+  src/              React + Tailwind admin dashboard
+  vite.config.js    Vite build config
 db/
-  schema.sql          — Table definitions
-  seed-staging.sql    — Clean data
-  seed-production.sql — Legacy data with NULLs
+  schema.sql        Table definitions (customers, products, orders, order_items)
+  seed-staging.sql  Clean data — all fields populated
+  seed-production.sql  Legacy data — NULL status, tier, addresses
 deploy/
-  setup-demo.sh     — Infrastructure setup
-  create-bad-pr.sh  — Create the bad PR on GitHub
-  deploy-bad-pr.sh  — Deploy v1.1.0 to both envs
-  setup-alerts.sh   — Wire alerts to Dave
-  run-demo.sh       — Full guided demo
-  teardown.sh       — Delete everything
+  setup-infra.sh    Provision both environments
+  deploy-app.sh     Build + deploy to any environment/slot
+  create-bad-pr.sh  Create PR #42 on GitHub
+  setup-alerts.sh   Wire App Insights alerts to Dave
+  run-demo.sh       Full automated demo timeline
+  teardown.sh       Delete everything
+.github/workflows/
+  deploy.yml        Real CI/CD pipeline (build → staging → slot swap → prod)
 ```
 
 ## Cost
 
-~$15-20/day when running (2x SQL Basic, 2x ACI, 2x ACR Basic, 2x App Insights).
-Run `teardown.sh` when done.
+~$20-25/day when running (2× App Service B1, 2× SQL Basic, 2× App Insights).  
+Run `deploy/teardown.sh` when done.

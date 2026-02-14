@@ -1,64 +1,65 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Create a realistic-looking PR on GitHub that introduces the v1.1.0 bug
-# This is what Dave will correlate the production failure back to
+###############################################################################
+# create-bad-pr.sh — Create PR #42 with the buggy v1.1.0 code
+###############################################################################
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_DIR="$SCRIPT_DIR/.."
-cd "$REPO_DIR"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 BRANCH="feature/status-badges"
-echo "=== Creating Bad PR: $BRANCH ==="
+
+echo "=== Creating Bad PR ==="
+
+cd "$PROJECT_ROOT"
 
 # Ensure we're on main and up to date
-git checkout main 2>/dev/null || git checkout -b main
+git checkout main
 git pull origin main 2>/dev/null || true
 
 # Create feature branch
-git checkout -b "$BRANCH" 2>/dev/null || git checkout "$BRANCH"
+echo "Creating branch: $BRANCH"
+git checkout -b "$BRANCH"
 
-# Swap in the buggy version
+# Copy the buggy app version
+echo "Applying v1.1.0 changes..."
 cp api/app-v1.1.0.js api/app.js
 
-# Stage and commit with a realistic commit message
+# Commit with a realistic message
 git add api/app.js
-git commit -m "feat: add status badge system for order display
+git commit -m "feat: add order status badges and stats endpoint
 
-- Add color-coded status badges (pending=amber, confirmed=blue, shipped=purple, delivered=green, cancelled=red)
-- Add ?status= query parameter for filtering orders
-- Add status breakdown to /api/stats for dashboard charts
-- Improve order display with formatted status labels
-
-Tested locally with staging database — all orders display correctly."
+- Added color-coded status badges to order list
+- New /api/stats endpoint for dashboard metrics
+- Refactored order queries for better performance
+- Tested against staging database ✅"
 
 # Push and create PR
-git push -u origin "$BRANCH"
+echo "Pushing branch and creating PR..."
+git push origin "$BRANCH"
+
 gh pr create \
-  --title "feat: Add status badge system for order display" \
-  --body "## Summary
-Adds a visual status badge system to the orders API for better dashboard UX.
+  --title "Add order status badges and stats dashboard" \
+  --body "## Changes
 
-### Changes
-- \`formatStatus()\` function maps order statuses to color-coded badges
-- \`GET /api/orders?status=shipped\` — new filter parameter
-- \`GET /api/stats\` now includes \`byStatus\` breakdown for charts
-- Consistent status formatting across all order endpoints
+- ✨ Color-coded status badges on the orders page
+- 📊 New \`/api/stats\` endpoint for the dashboard
+- ⚡ Refactored SQL queries for better performance
 
-### Testing
-- ✅ Tested against staging database
-- ✅ All 5 status types display correctly
-- ✅ Filter parameter works as expected
-- ✅ Stats endpoint returns correct breakdown
+## Testing
 
-### Screenshots
-Status badges render as colored pills in the dashboard." \
-  --base main
+- [x] Tested against staging database
+- [x] All endpoints return 200
+- [x] Frontend renders badges correctly
 
-# Switch back to main and restore
+Closes #41" \
+  --base main \
+  --head "$BRANCH"
+
+echo "Switching back to main..."
 git checkout main
+
 echo ""
-echo "=== PR Created ==="
-echo "Branch: $BRANCH"
-echo "The commit message says 'tested with staging database' — that's the tell."
-echo "Staging has clean data (no NULLs). Production has legacy NULL status rows."
+echo "✅ PR created on branch '$BRANCH'"
+echo "   Ready to merge when demo starts"
