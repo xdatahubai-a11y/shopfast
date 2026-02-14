@@ -4,7 +4,7 @@ import Spinner from '../components/Spinner'
 
 export default function Dashboard() {
   const { data: stats, loading: sl, error: se } = useFetch('/api/stats')
-  const { data: ordersData, loading: ol, error: oe } = useFetch('/api/orders?limit=10')
+  const { data: ordersRaw, loading: ol, error: oe } = useFetch('/api/orders?limit=10')
 
   const error = se || oe
 
@@ -16,7 +16,8 @@ export default function Dashboard() {
     </div>
   )
 
-  const orders = ordersData?.orders || ordersData || []
+  // API returns flat array or {orders: [...]}
+  const orders = Array.isArray(ordersRaw) ? ordersRaw : (ordersRaw?.orders || [])
 
   const statCards = [
     { label: 'Total Orders', value: stats?.totalOrders ?? 0, icon: (
@@ -25,16 +26,20 @@ export default function Dashboard() {
     { label: 'Revenue', value: `$${(stats?.totalRevenue ?? 0).toLocaleString()}`, icon: (
       <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
     ), color: 'text-success bg-green-50', trend: '+8%' },
-    { label: 'Active Products', value: stats?.activeProducts ?? 0, icon: (
+    { label: 'Products', value: stats?.totalProducts ?? 0, icon: (
       <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" /></svg>
     ), color: 'text-purple-600 bg-purple-50', trend: '+3' },
-    { label: 'Customers', value: stats?.totalCustomers ?? 0, icon: (
-      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" /></svg>
+    { label: 'Avg Order', value: `$${(stats?.avgOrderValue ?? 0).toFixed(2)}`, icon: (
+      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" /></svg>
     ), color: 'text-amber-600 bg-amber-50', trend: '+5%' },
   ]
 
-  // Build status counts
-  const statusCounts = stats?.ordersByStatus || {}
+  // Build status counts from byStatus (API: {label: {count, revenue, badge}})
+  const byStatus = stats?.byStatus || {}
+  const statusCounts = {}
+  Object.entries(byStatus).forEach(([label, data]) => {
+    statusCounts[label.toLowerCase()] = data.count
+  })
   const maxCount = Math.max(...Object.values(statusCounts), 1)
   const barColors = {
     pending: 'bg-amber-500',
@@ -107,10 +112,10 @@ export default function Dashboard() {
                 {orders.slice(0, 8).map(o => (
                   <tr key={o.id} className="hover:bg-surface-secondary/50 transition-colors">
                     <td className="px-6 py-3 text-sm font-mono text-text-secondary">#{o.id}</td>
-                    <td className="px-6 py-3 text-sm text-text-primary font-medium">{o.customer_name}</td>
+                    <td className="px-6 py-3 text-sm text-text-primary font-medium">{o.customerName || o.customer_name}</td>
                     <td className="px-6 py-3"><StatusBadge status={o.status} /></td>
                     <td className="px-6 py-3 text-sm font-semibold text-text-primary text-right">${Number(o.total).toFixed(2)}</td>
-                    <td className="px-6 py-3 text-sm text-text-secondary text-right">{new Date(o.created_at).toLocaleDateString()}</td>
+                    <td className="px-6 py-3 text-sm text-text-secondary text-right">{new Date(o.createdAt || o.created_at).toLocaleDateString()}</td>
                   </tr>
                 ))}
               </tbody>

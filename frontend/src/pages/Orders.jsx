@@ -4,7 +4,7 @@ import StatusBadge from '../components/StatusBadge'
 import Spinner from '../components/Spinner'
 
 export default function Orders() {
-  const { data, loading, error } = useFetch('/api/orders')
+  const { data: rawData, loading, error } = useFetch('/api/orders')
   const [expanded, setExpanded] = useState(null)
 
   if (loading) return <Spinner />
@@ -14,7 +14,7 @@ export default function Orders() {
     </div>
   )
 
-  const orders = data?.orders || data || []
+  const orders = Array.isArray(rawData) ? rawData : (rawData?.orders || [])
 
   return (
     <div className="bg-surface rounded-xl border border-border overflow-hidden">
@@ -48,10 +48,10 @@ export default function Orders() {
                   className="hover:bg-surface-secondary/50 cursor-pointer transition-colors"
                 >
                   <td className="px-6 py-3.5 text-sm font-mono text-text-secondary">#{o.id}</td>
-                  <td className="px-6 py-3.5 text-sm text-text-primary font-medium">{o.customer_name}</td>
+                  <td className="px-6 py-3.5 text-sm text-text-primary font-medium">{o.customerName || o.customer_name}</td>
                   <td className="px-6 py-3.5"><StatusBadge status={o.status} /></td>
                   <td className="px-6 py-3.5 text-sm font-semibold text-text-primary text-right">${Number(o.total).toFixed(2)}</td>
-                  <td className="px-6 py-3.5 text-sm text-text-secondary text-right">{new Date(o.created_at).toLocaleDateString()}</td>
+                  <td className="px-6 py-3.5 text-sm text-text-secondary text-right">{new Date(o.createdAt || o.created_at).toLocaleDateString()}</td>
                 </tr>
                 {expanded === o.id && (
                   <tr>
@@ -59,7 +59,7 @@ export default function Orders() {
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                         <div>
                           <span className="text-[11px] text-text-muted uppercase tracking-wide font-medium">Email</span>
-                          <p className="text-text-primary mt-0.5">{o.customer_email || '—'}</p>
+                          <p className="text-text-primary mt-0.5">{o.customerEmail || o.customer_email || '—'}</p>
                         </div>
                         <div>
                           <span className="text-[11px] text-text-muted uppercase tracking-wide font-medium">Items</span>
@@ -71,20 +71,9 @@ export default function Orders() {
                         </div>
                         <div>
                           <span className="text-[11px] text-text-muted uppercase tracking-wide font-medium">Created</span>
-                          <p className="text-text-primary mt-0.5">{new Date(o.created_at).toLocaleString()}</p>
+                          <p className="text-text-primary mt-0.5">{new Date(o.createdAt || o.created_at).toLocaleString()}</p>
                         </div>
                       </div>
-                      {o.items && o.items.length > 0 && (
-                        <div className="mt-4 pt-3 border-t border-border-light">
-                          <p className="text-[11px] text-text-muted uppercase tracking-wide font-medium mb-2">Line Items</p>
-                          {o.items.map((item, i) => (
-                            <div key={i} className="flex justify-between text-sm py-1.5">
-                              <span className="text-text-primary">{item.product_name || item.name} × {item.quantity}</span>
-                              <span className="font-medium text-text-primary">${Number(item.price * item.quantity).toFixed(2)}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
                     </td>
                   </tr>
                 )}

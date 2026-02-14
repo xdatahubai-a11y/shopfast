@@ -2,7 +2,7 @@ import useFetch from '../hooks/useFetch'
 import Spinner from '../components/Spinner'
 
 export default function Products() {
-  const { data, loading, error } = useFetch('/api/products')
+  const { data: rawData, loading, error } = useFetch('/api/products')
 
   if (loading) return <Spinner />
   if (error) return (
@@ -11,7 +11,8 @@ export default function Products() {
     </div>
   )
 
-  const products = data?.products || data || []
+  // API returns flat array or {products: [...]}
+  const products = Array.isArray(rawData) ? rawData : (rawData?.products || [])
 
   return (
     <div>
